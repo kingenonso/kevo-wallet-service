@@ -9,5 +9,6 @@ public record WithdrawalResponse(
         String currency,
         String destinationReference,
         String failureReason,
-        String providerReference
+        String providerReference,
+        Long bankAccountId
 ) {}

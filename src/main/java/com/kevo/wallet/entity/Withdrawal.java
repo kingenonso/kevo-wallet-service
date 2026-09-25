@@ -30,6 +30,9 @@ public class Withdrawal {
     @Column(nullable = false, length = 3)
     private String currency;
 
+    @Column(name = "bank_account_id")
+    private Long bankAccountId;
+
     @Column(name = "destination_reference", nullable = false, length = 200)
     private String destinationReference;
 
@@ -51,7 +54,7 @@ public class Withdrawal {
 
     public Withdrawal(Long walletId, String idempotencyKey, String providerReference,
                        String providerName, BigDecimal amount, String currency,
-                       String destinationReference, WithdrawalStatus status,
+                       Long bankAccountId, String destinationReference, WithdrawalStatus status,
                        String failureReason, Long ledgerEntryId) {
         this.walletId = walletId;
         this.idempotencyKey = idempotencyKey;
@@ -59,6 +62,7 @@ public class Withdrawal {
         this.providerName = providerName;
         this.amount = amount;
         this.currency = currency;
+        this.bankAccountId = bankAccountId;
         this.destinationReference = destinationReference;
         this.status = status;
         this.failureReason = failureReason;
@@ -73,6 +77,7 @@ public class Withdrawal {
     public String getProviderName() { return providerName; }
     public BigDecimal getAmount() { return amount; }
     public String getCurrency() { return currency; }
+    public Long getBankAccountId() { return bankAccountId; }
     public String getDestinationReference() { return destinationReference; }
     public WithdrawalStatus getStatus() { return status; }
     public String getFailureReason() { return failureReason; }

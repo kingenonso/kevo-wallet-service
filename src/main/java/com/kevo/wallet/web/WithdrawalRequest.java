@@ -9,6 +9,6 @@ import java.math.BigDecimal;
 public record WithdrawalRequest(
         @NotNull @DecimalMin("0.01") BigDecimal amount,
         @NotBlank String currency,
-        @NotBlank String destinationReference,
+        @NotNull Long bankAccountId,
         @NotBlank String idempotencyKey
 ) {}
