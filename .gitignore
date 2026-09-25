@@ -1,0 +1,10 @@
+target/
+*.log
+nohup.out
+.env
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+.DS_Store
