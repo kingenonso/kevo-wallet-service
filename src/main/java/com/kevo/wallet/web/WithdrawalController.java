@@ -22,9 +22,16 @@ public class WithdrawalController {
     public WithdrawalResponse createWithdrawal(@PathVariable Long kevoUserId,
                                                 @Valid @RequestBody WithdrawalRequest request) {
         var wallet = walletService.getOrCreateWallet(kevoUserId);
-        Withdrawal withdrawal = withdrawalService.createWithdrawal(
-                wallet.getId(), request.amount(), request.currency(),
-                request.destinationReference(), request.idempotencyKey());
+
+        Withdrawal withdrawal;
+        try {
+            withdrawal = withdrawalService.createWithdrawal(
+                    wallet.getId(), request.amount(), request.currency(),
+                    request.bankAccountId(), request.idempotencyKey());
+        } catch (RuntimeException e) {
+            withdrawal = withdrawalService.findExisting(wallet.getId(), request.idempotencyKey())
+                    .orElseThrow(() -> e);
+        }
 
         return new WithdrawalResponse(
                 withdrawal.getId(),
@@ -33,7 +40,8 @@ public class WithdrawalController {
                 withdrawal.getCurrency(),
                 withdrawal.getDestinationReference(),
                 withdrawal.getFailureReason(),
-                withdrawal.getProviderReference()
+                withdrawal.getProviderReference(),
+                withdrawal.getBankAccountId()
         );
     }
 }

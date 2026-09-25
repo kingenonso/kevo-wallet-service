@@ -22,9 +22,17 @@ public class FundLockController {
     public FundLockResponse createLock(@PathVariable Long kevoUserId,
                                         @Valid @RequestBody FundLockRequest request) {
         var wallet = walletService.getOrCreateWallet(kevoUserId);
-        FundLock lock = fundLockService.createLock(
-                wallet.getId(), request.amount(), request.currency(),
-                request.marketplaceTransactionId(), request.idempotencyKey());
+
+        FundLock lock;
+        try {
+            lock = fundLockService.createLock(
+                    wallet.getId(), request.amount(), request.currency(),
+                    request.marketplaceTransactionId(), request.idempotencyKey());
+        } catch (RuntimeException e) {
+            lock = fundLockService.findExisting(wallet.getId(), request.idempotencyKey())
+                    .orElseThrow(() -> e);
+        }
+
         return toResponse(lock);
     }
 

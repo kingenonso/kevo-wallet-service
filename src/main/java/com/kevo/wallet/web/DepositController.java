@@ -29,7 +29,14 @@ public class DepositController {
     @PostMapping("/internal/wallets/{kevoUserId}/deposits")
     public DepositResponse deposit(@PathVariable Long kevoUserId, @Valid @RequestBody DepositRequest request) {
         Wallet wallet = walletService.getOrCreateWallet(kevoUserId);
-        Deposit deposit = depositService.createDeposit(wallet, request.amount(), request.currency(), request.idempotencyKey());
+
+        Deposit deposit;
+        try {
+            deposit = depositService.createDeposit(wallet, request.amount(), request.currency(), request.idempotencyKey());
+        } catch (RuntimeException e) {
+            deposit = depositService.findExisting(wallet.getId(), request.idempotencyKey())
+                    .orElseThrow(() -> e);
+        }
 
         return new DepositResponse(
                 deposit.getId(),

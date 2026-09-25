@@ -7,6 +7,7 @@ import com.kevo.wallet.payment.PaymentProvider;
 import com.kevo.wallet.repository.DepositRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -47,5 +48,10 @@ public class DepositService {
             return depositRepository.findByWalletIdAndIdempotencyKey(wallet.getId(), idempotencyKey)
                     .orElseThrow(() -> e);
         }
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Deposit> findExisting(Long walletId, String idempotencyKey) {
+        return depositRepository.findByWalletIdAndIdempotencyKey(walletId, idempotencyKey);
     }
 }

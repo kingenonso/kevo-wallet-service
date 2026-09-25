@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -79,7 +80,7 @@ public class FundLockService {
                         "No fund lock found for wallet " + walletId + " and marketplace transaction " + marketplaceTransactionId));
 
         if (lock.getStatus() == FundLockStatus.RELEASED) {
-            return lock; // idempotent: already released, no-op
+            return lock;
         }
         if (lock.getStatus() != FundLockStatus.ACTIVE) {
             throw new IllegalStateException("Cannot release a fund lock in status " + lock.getStatus());
@@ -116,7 +117,7 @@ public class FundLockService {
                         "No fund lock found for wallet " + buyerWalletId + " and marketplace transaction " + marketplaceTransactionId));
 
         if (lock.getStatus() == FundLockStatus.CAPTURED) {
-            return lock; // idempotent: already captured, no-op
+            return lock;
         }
         if (lock.getStatus() != FundLockStatus.ACTIVE) {
             throw new IllegalStateException("Cannot capture a fund lock in status " + lock.getStatus());
@@ -125,8 +126,6 @@ public class FundLockService {
         Wallet sellerWallet = walletService.getOrCreateWallet(sellerKevoUserId);
         Long sellerWalletId = sellerWallet.getId();
 
-        // Always lock the lower wallet ID first, regardless of which side is buyer/seller,
-        // so two concurrent transfers between the same pair of wallets can never deadlock.
         Long firstId = Math.min(buyerWalletId, sellerWalletId);
         Long secondId = Math.max(buyerWalletId, sellerWalletId);
 
@@ -155,6 +154,11 @@ public class FundLockService {
 
         lock.markCaptured(creditSellerAvailable.getId());
         return fundLockRepository.save(lock);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<FundLock> findExisting(Long walletId, String idempotencyKey) {
+        return fundLockRepository.findByWalletIdAndIdempotencyKey(walletId, idempotencyKey);
     }
 
     private FundLock saveNew(FundLock lock, Long walletId, String idempotencyKey) {
