@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> {
     List<LedgerEntry> findByWalletId(Long walletId);
+    List<LedgerEntry> findByLedgerTransactionId(String ledgerTransactionId);
 }
