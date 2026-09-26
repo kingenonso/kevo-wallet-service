@@ -65,4 +65,11 @@ public class Deposit {
     public DepositStatus getStatus() { return status; }
     public Long getLedgerEntryId() { return ledgerEntryId; }
     public Instant getCreatedAt() { return createdAt; }
+
+    // A reversed deposit is never edited or deleted - this just flips its own
+    // status; the actual balance change happens via a new compensating ledger
+    // entry (see DepositReversalService), never by touching this row's amount.
+    public void markReversed() {
+        this.status = DepositStatus.REVERSED;
+    }
 }

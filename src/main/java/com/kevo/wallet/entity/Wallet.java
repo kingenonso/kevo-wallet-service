@@ -40,4 +40,12 @@ public class Wallet {
     public String getCurrency() { return currency; }
     public WalletStatus getStatus() { return status; }
     public Instant getCreatedAt() { return createdAt; }
+
+    // Restricting a wallet blocks further withdrawals without touching its
+    // funding ability - used when a deposit reversal/chargeback leaves the
+    // wallet owing money back (spec Section 17), so more money can't leave
+    // while that's unresolved.
+    public void restrict() {
+        this.status = WalletStatus.RESTRICTED;
+    }
 }

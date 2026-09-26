@@ -83,6 +83,12 @@ public class WithdrawalService {
         Wallet wallet = walletRepository.findByIdForUpdate(walletId)
                 .orElseThrow(() -> new IllegalArgumentException("Wallet not found: " + walletId));
 
+        if (wallet.getStatus() != WalletStatus.ACTIVE) {
+            return saveOutcome(new Withdrawal(wallet.getId(), idempotencyKey, null,
+                    paymentProvider.getProviderName(), amount, currency, account.getId(), destinationReference,
+                    WithdrawalStatus.FAILED, "Wallet is restricted from withdrawals", null), walletId, idempotencyKey);
+        }
+
         Map<Bucket, BigDecimal> balances = walletService.computeBalances(walletId);
         BigDecimal available = balances.getOrDefault(Bucket.AVAILABLE, BigDecimal.ZERO);
 
