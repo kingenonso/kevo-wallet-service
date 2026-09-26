@@ -46,6 +46,15 @@ public class Withdrawal {
     @Column(name = "ledger_entry_id")
     private Long ledgerEntryId;
 
+    @Column(name = "risk_level", length = 20)
+    private String riskLevel;
+
+    @Column(name = "review_notes", length = 1000)
+    private String reviewNotes;
+
+    @Column(name = "reviewed_at")
+    private LocalDateTime reviewedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -56,6 +65,14 @@ public class Withdrawal {
                        String providerName, BigDecimal amount, String currency,
                        Long bankAccountId, String destinationReference, WithdrawalStatus status,
                        String failureReason, Long ledgerEntryId) {
+        this(walletId, idempotencyKey, providerReference, providerName, amount, currency,
+                bankAccountId, destinationReference, status, failureReason, ledgerEntryId, null, null);
+    }
+
+    public Withdrawal(Long walletId, String idempotencyKey, String providerReference,
+                       String providerName, BigDecimal amount, String currency,
+                       Long bankAccountId, String destinationReference, WithdrawalStatus status,
+                       String failureReason, Long ledgerEntryId, String riskLevel, String reviewNotes) {
         this.walletId = walletId;
         this.idempotencyKey = idempotencyKey;
         this.providerReference = providerReference;
@@ -67,7 +84,22 @@ public class Withdrawal {
         this.status = status;
         this.failureReason = failureReason;
         this.ledgerEntryId = ledgerEntryId;
+        this.riskLevel = riskLevel;
+        this.reviewNotes = reviewNotes;
         this.createdAt = LocalDateTime.now();
+    }
+
+    public void approveAfterReview(String providerReference, Long ledgerEntryId) {
+        this.status = WithdrawalStatus.COMPLETED;
+        this.providerReference = providerReference;
+        this.ledgerEntryId = ledgerEntryId;
+        this.reviewedAt = LocalDateTime.now();
+    }
+
+    public void rejectAfterReview(String reason) {
+        this.status = WithdrawalStatus.FAILED;
+        this.failureReason = reason;
+        this.reviewedAt = LocalDateTime.now();
     }
 
     public Long getId() { return id; }
@@ -82,5 +114,8 @@ public class Withdrawal {
     public WithdrawalStatus getStatus() { return status; }
     public String getFailureReason() { return failureReason; }
     public Long getLedgerEntryId() { return ledgerEntryId; }
+    public String getRiskLevel() { return riskLevel; }
+    public String getReviewNotes() { return reviewNotes; }
+    public LocalDateTime getReviewedAt() { return reviewedAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

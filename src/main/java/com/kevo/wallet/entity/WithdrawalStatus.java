@@ -1,5 +1,5 @@
 package com.kevo.wallet.entity;
 
 public enum WithdrawalStatus {
-    PENDING, COMPLETED, FAILED, REVERSED
+    PENDING, PENDING_REVIEW, COMPLETED, FAILED, REVERSED
 }

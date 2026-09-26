@@ -18,4 +18,12 @@ public interface WithdrawalRepository extends JpaRepository<Withdrawal, Long> {
     BigDecimal sumAmountByWalletIdAndStatusAndCreatedAtAfter(@Param("walletId") Long walletId,
                                                               @Param("status") WithdrawalStatus status,
                                                               @Param("since") LocalDateTime since);
+
+    boolean existsByWalletIdAndBankAccountIdAndStatus(Long walletId, Long bankAccountId, WithdrawalStatus status);
+
+    long countByWalletIdAndStatus(Long walletId, WithdrawalStatus status);
+
+    long countByWalletIdAndStatusAndCreatedAtAfter(Long walletId, WithdrawalStatus status, LocalDateTime since);
+
+    Optional<Withdrawal> findTopByWalletIdAndStatusOrderByAmountDesc(Long walletId, WithdrawalStatus status);
 }

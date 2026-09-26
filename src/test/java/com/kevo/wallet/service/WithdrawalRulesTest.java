@@ -153,12 +153,12 @@ class WithdrawalRulesTest {
         BankAccount account = verifiedAccount(wallet);
 
         Withdrawal first = withdrawalService.createWithdrawal(
-                wallet.getId(), new BigDecimal("4990.00"), "USD",
+                wallet.getId(), new BigDecimal("4000.00"), "USD",
                 account.getId(), "daily-limit-first-" + UUID.randomUUID());
         assertEquals(WithdrawalStatus.COMPLETED, first.getStatus());
 
         Withdrawal second = withdrawalService.createWithdrawal(
-                wallet.getId(), new BigDecimal("20.00"), "USD",
+                wallet.getId(), new BigDecimal("1050.00"), "USD",
                 account.getId(), "daily-limit-second-" + UUID.randomUUID());
 
         assertEquals(WithdrawalStatus.FAILED, second.getStatus());

@@ -27,19 +27,22 @@ public class WithdrawalService {
     private final BankAccountRepository bankAccountRepository;
     private final WalletService walletService;
     private final PaymentProvider paymentProvider;
+    private final WithdrawalRiskService withdrawalRiskService;
 
     public WithdrawalService(WithdrawalRepository withdrawalRepository,
                               WalletRepository walletRepository,
                               LedgerEntryRepository ledgerEntryRepository,
                               BankAccountRepository bankAccountRepository,
                               WalletService walletService,
-                              PaymentProvider paymentProvider) {
+                              PaymentProvider paymentProvider,
+                              WithdrawalRiskService withdrawalRiskService) {
         this.withdrawalRepository = withdrawalRepository;
         this.walletRepository = walletRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.bankAccountRepository = bankAccountRepository;
         this.walletService = walletService;
         this.paymentProvider = paymentProvider;
+        this.withdrawalRiskService = withdrawalRiskService;
     }
 
     @Transactional
@@ -107,12 +110,23 @@ public class WithdrawalService {
                     WithdrawalStatus.FAILED, "Daily withdrawal limit exceeded", null), walletId, idempotencyKey);
         }
 
+        WithdrawalRiskAssessment riskAssessment = withdrawalRiskService.assess(
+                walletId, account.getId(), amount, DAILY_WITHDRAWAL_LIMIT);
+
+        if (riskAssessment.requiresManualReview()) {
+            return saveOutcome(new Withdrawal(wallet.getId(), idempotencyKey, null,
+                    paymentProvider.getProviderName(), amount, currency, account.getId(), destinationReference,
+                    WithdrawalStatus.PENDING_REVIEW, null, null,
+                    riskAssessment.riskLevel(), riskAssessment.reviewNotes()), walletId, idempotencyKey);
+        }
+
         PaymentProvider.PaymentResult result = paymentProvider.processWithdrawal(amount, currency, idempotencyKey);
 
         if (!result.success()) {
             return saveOutcome(new Withdrawal(wallet.getId(), idempotencyKey, result.providerReference(),
                     paymentProvider.getProviderName(), amount, currency, account.getId(), destinationReference,
-                    WithdrawalStatus.FAILED, result.failureReason(), null), walletId, idempotencyKey);
+                    WithdrawalStatus.FAILED, result.failureReason(), null,
+                    riskAssessment.riskLevel(), riskAssessment.reviewNotes()), walletId, idempotencyKey);
         }
 
         LedgerEntry entry = new LedgerEntry(
@@ -131,7 +145,7 @@ public class WithdrawalService {
 
         Withdrawal completed = new Withdrawal(wallet.getId(), idempotencyKey, result.providerReference(),
                 paymentProvider.getProviderName(), amount, currency, account.getId(), destinationReference,
-                WithdrawalStatus.COMPLETED, null, entry.getId());
+                WithdrawalStatus.COMPLETED, null, entry.getId(), riskAssessment.riskLevel(), riskAssessment.reviewNotes());
 
         return saveOutcome(completed, walletId, idempotencyKey);
     }
@@ -145,6 +159,74 @@ public class WithdrawalService {
     @Transactional(readOnly = true)
     public Optional<Withdrawal> findExisting(Long walletId, String idempotencyKey) {
         return withdrawalRepository.findByWalletIdAndIdempotencyKey(walletId, idempotencyKey);
+    }
+
+    @Transactional
+    public Withdrawal approveReviewedWithdrawal(Long withdrawalId, Long expectedWalletId) {
+        Withdrawal withdrawal = withdrawalRepository.findById(withdrawalId)
+                .orElseThrow(() -> new IllegalArgumentException("Withdrawal not found: " + withdrawalId));
+        if (!withdrawal.getWalletId().equals(expectedWalletId)) {
+            throw new IllegalArgumentException("Withdrawal not found: " + withdrawalId);
+        }
+        if (withdrawal.getStatus() != WithdrawalStatus.PENDING_REVIEW) {
+            throw new IllegalStateException("This withdrawal is not pending review (current status: " + withdrawal.getStatus() + ")");
+        }
+
+        Wallet wallet = walletRepository.findByIdForUpdate(withdrawal.getWalletId())
+                .orElseThrow(() -> new IllegalArgumentException("Wallet not found: " + withdrawal.getWalletId()));
+
+        if (wallet.getStatus() != WalletStatus.ACTIVE) {
+            withdrawal.rejectAfterReview("Wallet is no longer active");
+            return withdrawalRepository.save(withdrawal);
+        }
+
+        // Real time may have passed since this was flagged - re-check the
+        // balance now rather than trusting the snapshot from creation time.
+        Map<Bucket, BigDecimal> balances = walletService.computeBalances(wallet.getId());
+        BigDecimal available = balances.getOrDefault(Bucket.AVAILABLE, BigDecimal.ZERO);
+        if (available.compareTo(withdrawal.getAmount()) < 0) {
+            withdrawal.rejectAfterReview("Insufficient available funds at the time of review approval");
+            return withdrawalRepository.save(withdrawal);
+        }
+
+        PaymentProvider.PaymentResult result = paymentProvider.processWithdrawal(
+                withdrawal.getAmount(), withdrawal.getCurrency(), withdrawal.getIdempotencyKey());
+
+        if (!result.success()) {
+            withdrawal.rejectAfterReview("Approved for processing but the payment provider declined it: " + result.failureReason());
+            return withdrawalRepository.save(withdrawal);
+        }
+
+        LedgerEntry entry = new LedgerEntry(
+                wallet.getId(),
+                result.providerReference(),
+                Direction.DEBIT,
+                Bucket.AVAILABLE,
+                "WITHDRAWAL",
+                withdrawal.getAmount(),
+                withdrawal.getCurrency(),
+                "Withdrawal via " + paymentProvider.getProviderName() + " (approved after manual review)",
+                null,
+                null
+        );
+        entry = ledgerEntryRepository.save(entry);
+
+        withdrawal.approveAfterReview(result.providerReference(), entry.getId());
+        return withdrawalRepository.save(withdrawal);
+    }
+
+    @Transactional
+    public Withdrawal rejectReviewedWithdrawal(Long withdrawalId, Long expectedWalletId, String reason) {
+        Withdrawal withdrawal = withdrawalRepository.findById(withdrawalId)
+                .orElseThrow(() -> new IllegalArgumentException("Withdrawal not found: " + withdrawalId));
+        if (!withdrawal.getWalletId().equals(expectedWalletId)) {
+            throw new IllegalArgumentException("Withdrawal not found: " + withdrawalId);
+        }
+        if (withdrawal.getStatus() != WithdrawalStatus.PENDING_REVIEW) {
+            throw new IllegalStateException("This withdrawal is not pending review (current status: " + withdrawal.getStatus() + ")");
+        }
+        withdrawal.rejectAfterReview(reason != null ? reason : "Rejected after manual review");
+        return withdrawalRepository.save(withdrawal);
     }
 
     private Withdrawal saveOutcome(Withdrawal withdrawal, Long walletId, String idempotencyKey) {

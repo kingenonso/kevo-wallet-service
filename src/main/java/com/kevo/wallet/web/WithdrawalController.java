@@ -33,6 +33,30 @@ public class WithdrawalController {
                     .orElseThrow(() -> e);
         }
 
+        return toResponse(withdrawal);
+    }
+
+    // High-risk withdrawals are held in PENDING_REVIEW rather than sent to
+    // the payment provider - these two let an admin resolve one. Scoped
+    // under the same kevoUserId path as everything else here so the
+    // withdrawal's actual wallet is checked against the caller's claimed
+    // identity, not just trusted from the withdrawal id alone.
+    @PutMapping("/{kevoUserId}/withdrawals/{withdrawalId}/approve")
+    public WithdrawalResponse approveWithdrawal(@PathVariable Long kevoUserId, @PathVariable Long withdrawalId) {
+        var wallet = walletService.getOrCreateWallet(kevoUserId);
+        Withdrawal withdrawal = withdrawalService.approveReviewedWithdrawal(withdrawalId, wallet.getId());
+        return toResponse(withdrawal);
+    }
+
+    @PutMapping("/{kevoUserId}/withdrawals/{withdrawalId}/reject")
+    public WithdrawalResponse rejectWithdrawal(@PathVariable Long kevoUserId, @PathVariable Long withdrawalId,
+                                                @RequestBody RejectWithdrawalRequest request) {
+        var wallet = walletService.getOrCreateWallet(kevoUserId);
+        Withdrawal withdrawal = withdrawalService.rejectReviewedWithdrawal(withdrawalId, wallet.getId(), request.reason());
+        return toResponse(withdrawal);
+    }
+
+    private WithdrawalResponse toResponse(Withdrawal withdrawal) {
         return new WithdrawalResponse(
                 withdrawal.getId(),
                 withdrawal.getStatus().name(),
@@ -41,7 +65,9 @@ public class WithdrawalController {
                 withdrawal.getDestinationReference(),
                 withdrawal.getFailureReason(),
                 withdrawal.getProviderReference(),
-                withdrawal.getBankAccountId()
+                withdrawal.getBankAccountId(),
+                withdrawal.getRiskLevel(),
+                withdrawal.getReviewNotes()
         );
     }
 }
