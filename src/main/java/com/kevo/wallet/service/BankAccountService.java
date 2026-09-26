@@ -2,10 +2,20 @@ package com.kevo.wallet.service;
 
 import com.kevo.wallet.entity.BankAccount;
 import com.kevo.wallet.entity.BankAccountStatus;
+import com.kevo.wallet.entity.Wallet;
 import com.kevo.wallet.repository.BankAccountRepository;
+import com.kevo.wallet.repository.WalletRepository;
+import com.stripe.StripeClient;
+import com.stripe.exception.StripeException;
+import com.stripe.model.Customer;
+import com.stripe.model.financialconnections.Session;
+import com.stripe.param.CustomerCreateParams;
+import com.stripe.param.financialconnections.SessionCreateParams;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,9 +24,15 @@ import java.util.UUID;
 public class BankAccountService {
 
     private final BankAccountRepository bankAccountRepository;
+    private final WalletRepository walletRepository;
+    private final StripeClient stripeClient;
 
-    public BankAccountService(BankAccountRepository bankAccountRepository) {
+    public BankAccountService(BankAccountRepository bankAccountRepository,
+                               WalletRepository walletRepository,
+                               @Value("${stripe.secret-key}") String stripeSecretKey) {
         this.bankAccountRepository = bankAccountRepository;
+        this.walletRepository = walletRepository;
+        this.stripeClient = new StripeClient(stripeSecretKey);
     }
 
     @Transactional
@@ -71,5 +87,78 @@ public class BankAccountService {
     private BankAccount requireOwnedAccount(Long bankAccountId, Long walletId) {
         return bankAccountRepository.findByIdAndWalletId(bankAccountId, walletId)
                 .orElseThrow(() -> new IllegalArgumentException("Bank account not found for this wallet"));
+    }
+
+    // Stripe requires one real Customer object per person before it will link
+    // a real bank account for them. Created once per wallet and reused.
+    private String getOrCreateStripeCustomerId(Long walletId, String accountHolderName) throws StripeException {
+        Wallet wallet = walletRepository.findById(walletId)
+                .orElseThrow(() -> new IllegalArgumentException("Wallet not found"));
+        if (wallet.getStripeCustomerId() != null) {
+            return wallet.getStripeCustomerId();
+        }
+        CustomerCreateParams params = CustomerCreateParams.builder()
+                .setName(accountHolderName)
+                .build();
+        Customer customer = stripeClient.customers().create(params);
+        wallet.linkStripeCustomer(customer.getId());
+        walletRepository.save(wallet);
+        return customer.getId();
+    }
+
+    // Starts a real Stripe Financial Connections session - the frontend uses
+    // the returned client secret to launch Stripe's own secure bank-login
+    // modal. Nothing is verified yet at this point.
+    @Transactional
+    public String createBankConnectionSession(Long walletId, String accountHolderName) {
+        try {
+            String customerId = getOrCreateStripeCustomerId(walletId, accountHolderName);
+            SessionCreateParams params = SessionCreateParams.builder()
+                    .setAccountHolder(
+                            SessionCreateParams.AccountHolder.builder()
+                                    .setType(SessionCreateParams.AccountHolder.Type.CUSTOMER)
+                                    .setCustomer(customerId)
+                                    .build()
+                    )
+                    .addPermission(SessionCreateParams.Permission.PAYMENT_METHOD)
+                    .build();
+            Session session = stripeClient.financialConnections().sessions().create(params);
+            return session.getClientSecret();
+        } catch (StripeException e) {
+            throw new IllegalStateException("Could not start bank connection: " + e.getMessage(), e);
+        }
+    }
+
+    // Called once the user has completed the real bank-login flow on the
+    // frontend. Retrieves the now-linked accounts directly from Stripe and
+    // creates each as an ALREADY-VERIFIED BankAccount row - logging into the
+    // real bank through Stripe's flow is itself the verification, so there
+    // is no separate self-click "Verify" step for accounts created this way.
+    @Transactional
+    public List<BankAccount> finalizeBankConnection(Long walletId, String sessionId, String accountHolderName) {
+        try {
+            Session session = stripeClient.financialConnections().sessions().retrieve(sessionId);
+            List<BankAccount> linked = new ArrayList<>();
+            List<BankAccount> existing = bankAccountRepository.findByWalletId(walletId);
+            for (com.stripe.model.financialconnections.Account account : session.getAccounts().getData()) {
+                boolean alreadyLinked = existing.stream()
+                        .anyMatch(a -> a.getProviderReference().equals(account.getId()));
+                if (alreadyLinked) {
+                    continue;
+                }
+                BankAccount bankAccount = new BankAccount(
+                        walletId,
+                        accountHolderName,
+                        account.getInstitutionName(),
+                        account.getLast4(),
+                        account.getId()
+                );
+                bankAccount.markVerified();
+                linked.add(bankAccountRepository.save(bankAccount));
+            }
+            return linked;
+        } catch (StripeException e) {
+            throw new IllegalStateException("Could not finalize bank connection: " + e.getMessage(), e);
+        }
     }
 }

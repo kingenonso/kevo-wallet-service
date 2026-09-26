@@ -67,6 +67,36 @@ public class BankAccountController {
         }
     }
 
+    @PostMapping("/connect-session")
+    public ResponseEntity<?> createConnectSession(@PathVariable Long kevoUserId,
+                                                    @Valid @RequestBody ConnectSessionRequest request) {
+        var wallet = walletService.getOrCreateWallet(kevoUserId);
+        try {
+            String clientSecret = bankAccountService.createBankConnectionSession(wallet.getId(), request.accountHolderName());
+            return ResponseEntity.ok(new ConnectSessionResponse(clientSecret));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/connect-finalize")
+    public ResponseEntity<?> finalizeConnectSession(@PathVariable Long kevoUserId,
+                                                      @Valid @RequestBody FinalizeConnectRequest request) {
+        var wallet = walletService.getOrCreateWallet(kevoUserId);
+        try {
+            List<BankAccount> accounts = bankAccountService.finalizeBankConnection(
+                    wallet.getId(), request.sessionId(), request.accountHolderName());
+            return ResponseEntity.ok(accounts.stream().map(this::toResponse).toList());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    public record ConnectSessionRequest(@jakarta.validation.constraints.NotBlank String accountHolderName) {}
+    public record ConnectSessionResponse(String clientSecret) {}
+    public record FinalizeConnectRequest(@jakarta.validation.constraints.NotBlank String sessionId,
+                                          @jakarta.validation.constraints.NotBlank String accountHolderName) {}
+
     private BankAccountResponse toResponse(BankAccount account) {
         return new BankAccountResponse(
                 account.getId(),
