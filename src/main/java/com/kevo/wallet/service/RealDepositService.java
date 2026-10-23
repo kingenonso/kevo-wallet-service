@@ -11,12 +11,15 @@ import com.kevo.wallet.repository.WalletRepository;
 import com.stripe.StripeClient;
 import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
+import com.stripe.net.RequestOptions;
 import com.stripe.param.PaymentIntentCreateParams;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 
 @Service
 public class RealDepositService {
@@ -43,8 +46,20 @@ public class RealDepositService {
     // The PENDING deposit created below only becomes COMPLETED (and the
     // balance only actually changes) once the Stripe webhook confirms the
     // money really cleared - see StripeWebhookService.
+    //
+    // idempotencyKey is checked against existing deposits BEFORE calling
+    // Stripe (a retried/double-submitted request must never trigger a
+    // second real ACH debit), and is also passed through to Stripe's own
+    // idempotency key as defense in depth, mirroring
+    // RealWithdrawalService's pattern.
     @Transactional
-    public PaymentIntent createRealDeposit(Long walletId, Long bankAccountId, long amountCents) throws StripeException {
+    public Deposit createRealDeposit(Long walletId, Long bankAccountId, long amountCents, String idempotencyKey) throws StripeException {
+
+        var existing = depositRepository.findByWalletIdAndIdempotencyKey(walletId, idempotencyKey);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
         Wallet wallet = walletRepository.findById(walletId)
                 .orElseThrow(() -> new IllegalArgumentException("Wallet not found"));
         BankAccount bankAccount = bankAccountRepository.findByIdAndWalletId(bankAccountId, walletId)
@@ -80,15 +95,31 @@ public class RealDepositService {
                 )
                 .build();
 
-        PaymentIntent intent = stripeClient.paymentIntents().create(params);
+        RequestOptions options = RequestOptions.builder()
+                .setIdempotencyKey("kevo_deposit_" + idempotencyKey)
+                .build();
+        PaymentIntent intent = stripeClient.paymentIntents().create(params, options);
 
         // amountCents was itself derived (exactly) from a 2-decimal BigDecimal
         // amount, so reconstructing it this way loses nothing.
         BigDecimal amount = BigDecimal.valueOf(amountCents, 2);
-        Deposit deposit = new Deposit(walletId, intent.getId(), intent.getId(), "STRIPE",
+        Deposit deposit = new Deposit(walletId, idempotencyKey, intent.getId(), "STRIPE",
                 amount, "usd", DepositStatus.PENDING, null);
-        depositRepository.save(deposit);
 
-        return intent;
+        return saveOutcome(deposit, walletId, idempotencyKey);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Deposit> findExisting(Long walletId, String idempotencyKey) {
+        return depositRepository.findByWalletIdAndIdempotencyKey(walletId, idempotencyKey);
+    }
+
+    private Deposit saveOutcome(Deposit deposit, Long walletId, String idempotencyKey) {
+        try {
+            return depositRepository.save(deposit);
+        } catch (DataIntegrityViolationException e) {
+            return depositRepository.findByWalletIdAndIdempotencyKey(walletId, idempotencyKey)
+                    .orElseThrow(() -> e);
+        }
     }
 }
