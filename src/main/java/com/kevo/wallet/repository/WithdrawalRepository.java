@@ -29,4 +29,6 @@ public interface WithdrawalRepository extends JpaRepository<Withdrawal, Long> {
     Optional<Withdrawal> findTopByWalletIdAndStatusOrderByAmountDesc(Long walletId, WithdrawalStatus status);
 
     List<Withdrawal> findAllByStatusOrderByCreatedAtAsc(WithdrawalStatus status);
+
+    Optional<Withdrawal> findByProviderReference(String providerReference);
 }

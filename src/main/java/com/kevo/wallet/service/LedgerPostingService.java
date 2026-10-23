@@ -3,20 +3,25 @@ package com.kevo.wallet.service;
 import com.kevo.wallet.entity.*;
 import com.kevo.wallet.repository.DepositRepository;
 import com.kevo.wallet.repository.LedgerEntryRepository;
+import com.kevo.wallet.repository.WithdrawalRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 @Service
 public class LedgerPostingService {
 
     private final LedgerEntryRepository ledgerEntryRepository;
     private final DepositRepository depositRepository;
+    private final WithdrawalRepository withdrawalRepository;
 
-    public LedgerPostingService(LedgerEntryRepository ledgerEntryRepository, DepositRepository depositRepository) {
+    public LedgerPostingService(LedgerEntryRepository ledgerEntryRepository, DepositRepository depositRepository,
+                                 WithdrawalRepository withdrawalRepository) {
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.depositRepository = depositRepository;
+        this.withdrawalRepository = withdrawalRepository;
     }
 
     @Transactional
@@ -70,5 +75,70 @@ public class LedgerPostingService {
     public Deposit failPendingDeposit(Deposit deposit) {
         deposit.markFailed();
         return depositRepository.save(deposit);
+    }
+
+    // Finalizes a real withdrawal once Stripe's payout.paid webhook confirms
+    // the money actually left for the user's bank. The funds were already
+    // moved out of AVAILABLE into WITHDRAWAL_PENDING when the payout was
+    // first submitted (see RealWithdrawalService) - this just debits them
+    // out of WITHDRAWAL_PENDING for good. There is no corresponding credit:
+    // the money is gone, paid out to a bank account outside KEVO's books.
+    @Transactional
+    public Withdrawal completePendingWithdrawal(Withdrawal withdrawal) {
+        LedgerEntry debitPending = new LedgerEntry(
+                withdrawal.getWalletId(),
+                withdrawal.getProviderReference(),
+                Direction.DEBIT,
+                Bucket.WITHDRAWAL_PENDING,
+                "WITHDRAWAL_SETTLED",
+                withdrawal.getAmount(),
+                withdrawal.getCurrency(),
+                "Withdrawal via " + withdrawal.getProviderName() + " paid out",
+                null,
+                null
+        );
+        debitPending = ledgerEntryRepository.save(debitPending);
+        withdrawal.markCompletedAfterPending(debitPending.getId());
+        return withdrawalRepository.save(withdrawal);
+    }
+
+    // Finalizes a real withdrawal once Stripe's payout.failed webhook
+    // reports the payout never reached the user's bank after all (e.g. the
+    // external account was closed). The reserved funds are returned to
+    // AVAILABLE so the user isn't left permanently short.
+    @Transactional
+    public Withdrawal failPendingWithdrawal(Withdrawal withdrawal, String reason) {
+        String ledgerTransactionId = UUID.randomUUID().toString();
+
+        LedgerEntry debitPending = new LedgerEntry(
+                withdrawal.getWalletId(),
+                ledgerTransactionId,
+                Direction.DEBIT,
+                Bucket.WITHDRAWAL_PENDING,
+                "WITHDRAWAL_FAILED",
+                withdrawal.getAmount(),
+                withdrawal.getCurrency(),
+                "Withdrawal via " + withdrawal.getProviderName() + " failed after submission: " + reason,
+                null,
+                null
+        );
+        ledgerEntryRepository.save(debitPending);
+
+        LedgerEntry creditAvailable = new LedgerEntry(
+                withdrawal.getWalletId(),
+                ledgerTransactionId,
+                Direction.CREDIT,
+                Bucket.AVAILABLE,
+                "WITHDRAWAL_FAILED",
+                withdrawal.getAmount(),
+                withdrawal.getCurrency(),
+                "Withdrawal via " + withdrawal.getProviderName() + " failed after submission: " + reason,
+                null,
+                null
+        );
+        ledgerEntryRepository.save(creditAvailable);
+
+        withdrawal.markFailedAfterPending(reason);
+        return withdrawalRepository.save(withdrawal);
     }
 }

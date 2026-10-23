@@ -102,6 +102,20 @@ public class Withdrawal {
         this.reviewedAt = LocalDateTime.now();
     }
 
+    // A real (Stripe Connect) withdrawal is recorded as PENDING the moment
+    // the transfer+payout is submitted to Stripe, then finalized here once
+    // a webhook confirms what actually happened - the same asynchronous
+    // shape RealDepositService/Deposit already use for real deposits.
+    public void markCompletedAfterPending(Long ledgerEntryId) {
+        this.status = WithdrawalStatus.COMPLETED;
+        this.ledgerEntryId = ledgerEntryId;
+    }
+
+    public void markFailedAfterPending(String reason) {
+        this.status = WithdrawalStatus.FAILED;
+        this.failureReason = reason;
+    }
+
     public Long getId() { return id; }
     public Long getWalletId() { return walletId; }
     public String getIdempotencyKey() { return idempotencyKey; }

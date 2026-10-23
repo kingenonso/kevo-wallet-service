@@ -2,13 +2,17 @@ package com.kevo.wallet.service;
 
 import com.kevo.wallet.entity.Deposit;
 import com.kevo.wallet.entity.DepositStatus;
+import com.kevo.wallet.entity.Withdrawal;
+import com.kevo.wallet.entity.WithdrawalStatus;
 import com.kevo.wallet.entity.WebhookEvent;
 import com.kevo.wallet.repository.DepositRepository;
 import com.kevo.wallet.repository.WebhookEventRepository;
+import com.kevo.wallet.repository.WithdrawalRepository;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.model.Event;
 import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.Payout;
 import com.stripe.model.StripeObject;
 import com.stripe.net.Webhook;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,15 +40,18 @@ public class StripeWebhookService {
     private final String webhookSigningSecret;
     private final WebhookEventRepository webhookEventRepository;
     private final DepositRepository depositRepository;
+    private final WithdrawalRepository withdrawalRepository;
     private final LedgerPostingService ledgerPostingService;
 
     public StripeWebhookService(@Value("${stripe.webhook-signing-secret:}") String webhookSigningSecret,
                                  WebhookEventRepository webhookEventRepository,
                                  DepositRepository depositRepository,
+                                 WithdrawalRepository withdrawalRepository,
                                  LedgerPostingService ledgerPostingService) {
         this.webhookSigningSecret = webhookSigningSecret;
         this.webhookEventRepository = webhookEventRepository;
         this.depositRepository = depositRepository;
+        this.withdrawalRepository = withdrawalRepository;
         this.ledgerPostingService = ledgerPostingService;
     }
 
@@ -72,8 +79,42 @@ public class StripeWebhookService {
         return switch (event.getType()) {
             case "payment_intent.succeeded" -> handlePaymentIntentOutcome(event, true);
             case "payment_intent.payment_failed" -> handlePaymentIntentOutcome(event, false);
+            case "payout.paid" -> handlePayoutOutcome(event, true);
+            case "payout.failed" -> handlePayoutOutcome(event, false);
             default -> new Outcome(Status.IGNORED, "Event type not handled: " + event.getType());
         };
+    }
+
+    private Outcome handlePayoutOutcome(Event event, boolean paid) {
+        EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
+        StripeObject stripeObject;
+        try {
+            stripeObject = deserializer.deserializeUnsafe();
+        } catch (com.stripe.exception.EventDataObjectDeserializationException e) {
+            return new Outcome(Status.REJECTED, "Event verified and recorded, but payload could not be parsed as a Payout");
+        }
+        if (!(stripeObject instanceof Payout)) {
+            return new Outcome(Status.REJECTED, "Event verified and recorded, but payload could not be parsed as a Payout");
+        }
+        Payout payout = (Payout) stripeObject;
+
+        Optional<Withdrawal> withdrawalOpt = withdrawalRepository.findByProviderReference(payout.getId());
+        if (withdrawalOpt.isEmpty()) {
+            return new Outcome(Status.REJECTED, "Event verified and recorded, but no matching withdrawal was found for " + payout.getId());
+        }
+        Withdrawal withdrawal = withdrawalOpt.get();
+
+        if (withdrawal.getStatus() != WithdrawalStatus.PENDING) {
+            return new Outcome(Status.DUPLICATE, "Withdrawal " + withdrawal.getId() + " is already " + withdrawal.getStatus());
+        }
+
+        if (paid) {
+            ledgerPostingService.completePendingWithdrawal(withdrawal);
+        } else {
+            String reason = payout.getFailureMessage() != null ? payout.getFailureMessage() : "Stripe reported this payout failed";
+            ledgerPostingService.failPendingWithdrawal(withdrawal, reason);
+        }
+        return new Outcome(Status.ACCEPTED, "Withdrawal " + withdrawal.getId() + " marked " + (paid ? "COMPLETED" : "FAILED"));
     }
 
     private Outcome handlePaymentIntentOutcome(Event event, boolean succeeded) {
