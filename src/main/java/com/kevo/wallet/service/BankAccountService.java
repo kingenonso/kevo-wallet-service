@@ -10,6 +10,9 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.Customer;
 import com.stripe.model.financialconnections.Session;
 import com.stripe.param.CustomerCreateParams;
+import com.stripe.model.PaymentMethod;
+import com.stripe.param.PaymentMethodAttachParams;
+import com.stripe.param.PaymentMethodCreateParams;
 import com.stripe.param.financialconnections.SessionCreateParams;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -137,6 +140,8 @@ public class BankAccountService {
     @Transactional
     public List<BankAccount> finalizeBankConnection(Long walletId, String sessionId, String accountHolderName) {
         try {
+            Wallet wallet = walletRepository.findById(walletId)
+                    .orElseThrow(() -> new IllegalArgumentException("Wallet not found"));
             Session session = stripeClient.financialConnections().sessions().retrieve(sessionId);
             List<BankAccount> linked = new ArrayList<>();
             List<BankAccount> existing = bankAccountRepository.findByWalletId(walletId);
@@ -154,6 +159,32 @@ public class BankAccountService {
                         account.getId()
                 );
                 bankAccount.markVerified();
+
+                // Turn the verified Financial Connections account into a
+                // real, chargeable Stripe PaymentMethod and attach it to
+                // this user's Customer - this is what a future deposit
+                // will actually charge. Not the bank account itself, a
+                // Stripe object built from it with the user's consent.
+                PaymentMethodCreateParams pmParams = PaymentMethodCreateParams.builder()
+                        .setType(PaymentMethodCreateParams.Type.US_BANK_ACCOUNT)
+                        .setBillingDetails(
+                                PaymentMethodCreateParams.BillingDetails.builder()
+                                        .setName(accountHolderName)
+                                        .build()
+                        )
+                        .setUsBankAccount(
+                                PaymentMethodCreateParams.UsBankAccount.builder()
+                                        .setFinancialConnectionsAccount(account.getId())
+                                        .build()
+                        )
+                        .build();
+                PaymentMethod paymentMethod = stripeClient.paymentMethods().create(pmParams);
+                stripeClient.paymentMethods().attach(
+                        paymentMethod.getId(),
+                        PaymentMethodAttachParams.builder().setCustomer(wallet.getStripeCustomerId()).build()
+                );
+                bankAccount.linkStripePaymentMethod(paymentMethod.getId());
+
                 linked.add(bankAccountRepository.save(bankAccount));
             }
             return linked;

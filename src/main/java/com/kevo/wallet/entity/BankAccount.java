@@ -26,6 +26,9 @@ public class BankAccount {
     @Column(name = "provider_reference", nullable = false, unique = true, length = 200)
     private String providerReference;
 
+    @Column(name = "stripe_payment_method_id")
+    private String stripePaymentMethodId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private BankAccountStatus status;
@@ -69,12 +72,22 @@ public class BankAccount {
         this.updatedAt = LocalDateTime.now();
     }
 
+    // Stripe needs a real PaymentMethod object (built from the verified
+    // Financial Connections account) before it will let us actually charge
+    // this bank account for a deposit. Created once, right after
+    // verification, and reused for every deposit after that.
+    public void linkStripePaymentMethod(String stripePaymentMethodId) {
+        this.stripePaymentMethodId = stripePaymentMethodId;
+        this.updatedAt = LocalDateTime.now();
+    }
+
     public Long getId() { return id; }
     public Long getWalletId() { return walletId; }
     public String getAccountHolderName() { return accountHolderName; }
     public String getBankName() { return bankName; }
     public String getLastFour() { return lastFour; }
     public String getProviderReference() { return providerReference; }
+    public String getStripePaymentMethodId() { return stripePaymentMethodId; }
     public BankAccountStatus getStatus() { return status; }
     public LocalDateTime getVerifiedAt() { return verifiedAt; }
     public LocalDateTime getDisabledAt() { return disabledAt; }

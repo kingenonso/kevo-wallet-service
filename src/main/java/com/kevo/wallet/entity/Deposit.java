@@ -72,4 +72,21 @@ public class Deposit {
     public void markReversed() {
         this.status = DepositStatus.REVERSED;
     }
+
+    // Completing a real (Stripe-backed) deposit happens asynchronously, once
+    // a webhook confirms the money actually cleared - so unlike the demo
+    // flow, this deposit already exists as PENDING before it can be marked
+    // COMPLETED. The actual ledger entry is created separately by
+    // LedgerPostingService; this method only records the outcome here.
+    public void markCompleted(Long ledgerEntryId) {
+        this.status = DepositStatus.COMPLETED;
+        this.ledgerEntryId = ledgerEntryId;
+    }
+
+    // A real deposit can fail after being started (insufficient funds,
+    // account closed, etc). No ledger entry is ever created for a failed
+    // deposit, so there is no balance change to reverse.
+    public void markFailed() {
+        this.status = DepositStatus.FAILED;
+    }
 }

@@ -20,7 +20,7 @@ public class InternalServiceAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
-        if (request.getRequestURI().startsWith("/internal/")) {
+        if (request.getRequestURI().startsWith("/internal/") && !request.getRequestURI().equals("/internal/webhooks/stripe")) {
             String providedSecret = request.getHeader("X-Internal-Service-Secret");
             if (providedSecret == null || !constantTimeEquals(providedSecret, internalSecret)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

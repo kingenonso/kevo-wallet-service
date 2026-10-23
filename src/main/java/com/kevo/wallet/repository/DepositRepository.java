@@ -13,6 +13,8 @@ import java.util.Optional;
 public interface DepositRepository extends JpaRepository<Deposit, Long> {
     Optional<Deposit> findByWalletIdAndIdempotencyKey(Long walletId, String idempotencyKey);
 
+    Optional<Deposit> findByProviderReference(String providerReference);
+
     @Query("SELECT COALESCE(SUM(d.amount), 0) FROM Deposit d " +
            "WHERE d.walletId = :walletId AND d.status = :status AND d.createdAt >= :since")
     BigDecimal sumAmountByWalletIdAndStatusAndCreatedAtAfter(@Param("walletId") Long walletId,
