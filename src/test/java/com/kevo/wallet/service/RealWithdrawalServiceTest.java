@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers RealWithdrawalService's guard-rail checks - the parts that fail
@@ -113,22 +114,30 @@ class RealWithdrawalServiceTest {
 
     @Test
     void highRiskRealWithdrawalIsRefusedWithoutEverCallingStripe() {
-        // Fakes a prior completed withdrawal directly (bypassing Stripe
-        // entirely) so this wallet is past its "first ever" withdrawal,
-        // then asks for an amount far above that history. Because the real
-        // path always passes a null bankAccountId to the risk check, the
-        // destination also always reads as "new" - two flags fire at once
-        // (AMOUNT_FAR_ABOVE_HISTORY + NEW_DESTINATION_ACCOUNT), which scores
-        // HIGH and must be refused before any real Stripe call is made - if
-        // this test reached Stripe with "acct_test_..." it would fail for
-        // the wrong reason (an invalid fake account) rather than prove the
-        // risk-refusal path actually works.
+        // Fakes 3 prior FAILED withdrawals directly (bypassing Stripe
+        // entirely) within the last hour, which on its own sets
+        // repeatedFailures=true in WithdrawalRiskService - and that
+        // unconditionally scores HIGH (see the "repeatedFailures ||
+        // flags.size() >= 2" check), independent of how many individual
+        // flags fire. This avoids relying on NEW_DESTINATION_ACCOUNT's
+        // behavior with a null bankAccountId (Spring Data JPA translates a
+        // null equality parameter to "IS NULL", so every real-path
+        // withdrawal - which always passes bankAccountId=null - actually
+        // matches every other real-path withdrawal's null destination,
+        // meaning NEW_DESTINATION_ACCOUNT does NOT reliably fire the way an
+        // earlier version of this test assumed). If this test reached
+        // Stripe with "acct_test_fake" it would fail for the wrong reason
+        // (an invalid fake account) rather than prove the risk-refusal path
+        // actually works.
         Wallet wallet = newFundedWallet(new BigDecimal("1000.00"));
         withFakeConnectAccountReady(wallet);
-        Withdrawal priorCompleted = new Withdrawal(wallet.getId(), "real-risk-setup-" + UUID.randomUUID(),
-                "fake_prior_ref_" + UUID.randomUUID(), "STRIPE_CONNECT", new BigDecimal("5.00"), "USD",
-                null, "Stripe Connect payout to acct_test_fake", WithdrawalStatus.COMPLETED, null, null);
-        withdrawalRepository.save(priorCompleted);
+        for (int i = 0; i < 3; i++) {
+            Withdrawal priorFailed = new Withdrawal(wallet.getId(), "real-risk-setup-" + UUID.randomUUID(),
+                    null, "STRIPE_CONNECT", new BigDecimal("5.00"), "USD",
+                    null, "Stripe Connect payout to acct_test_fake", WithdrawalStatus.FAILED,
+                    "setup failure " + i, null);
+            withdrawalRepository.save(priorFailed);
+        }
 
         Withdrawal result = realWithdrawalService.createRealWithdrawal(
                 wallet.getId(), new BigDecimal("20.00"), "USD", "real-high-risk-" + UUID.randomUUID());
@@ -136,7 +145,7 @@ class RealWithdrawalServiceTest {
         assertEquals(WithdrawalStatus.FAILED, result.getStatus());
         assertEquals("STRIPE_CONNECT", result.getProviderName());
         assertNull(result.getProviderReference());
-        assertEquals(true, result.getFailureReason().contains("HIGH"));
+        assertTrue(result.getFailureReason().contains("HIGH"), "failureReason was: " + result.getFailureReason());
     }
 
     @Test
