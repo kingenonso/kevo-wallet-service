@@ -1,6 +1,7 @@
 package com.kevo.wallet.web;
 
 import com.kevo.wallet.entity.Bucket;
+import com.kevo.wallet.entity.LedgerEntry;
 import com.kevo.wallet.entity.Wallet;
 import com.kevo.wallet.service.StripeConnectService;
 import com.kevo.wallet.service.WalletService;
@@ -8,6 +9,7 @@ import com.stripe.exception.StripeException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -16,6 +18,8 @@ import org.springframework.web.bind.annotation.RestController;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -50,6 +54,29 @@ public class WalletController {
                 withdrawalPending,
                 total
         );
+    }
+
+    @GetMapping("/internal/wallets/{kevoUserId}/ledger-entries")
+    public List<LedgerEntryResponse> getLedgerEntries(
+            @PathVariable Long kevoUserId,
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "0") int offset) {
+        Wallet wallet = walletService.getOrCreateWallet(kevoUserId);
+        return walletService.getLedgerEntries(wallet.getId(), limit, offset).stream()
+                .map(entry -> new LedgerEntryResponse(
+                        entry.getId(),
+                        entry.getLedgerTransactionId(),
+                        entry.getDirection().name(),
+                        entry.getBucket().name(),
+                        entry.getEntryType(),
+                        entry.getAmount(),
+                        entry.getCurrency(),
+                        entry.getDescription(),
+                        entry.getRelatedMarketplaceTransactionId(),
+                        entry.getReversesEntryId(),
+                        entry.getCreatedAt()
+                ))
+                .toList();
     }
 
     @PostMapping("/internal/wallets/{kevoUserId}/connect/account")
@@ -100,6 +127,19 @@ public class WalletController {
     public record OnboardingLinkResponse(String url) {}
     public record ConnectStatusResponse(boolean accountCreated, boolean payoutsEnabled) {}
     public record ErrorResponse(String message) {}
+    public record LedgerEntryResponse(
+            Long id,
+            String ledgerTransactionId,
+            String direction,
+            String bucket,
+            String entryType,
+            BigDecimal amount,
+            String currency,
+            String description,
+            Long relatedMarketplaceTransactionId,
+            Long reversesEntryId,
+            Instant createdAt
+    ) {}
 
     public record WalletResponse(
             Long kevoUserId,

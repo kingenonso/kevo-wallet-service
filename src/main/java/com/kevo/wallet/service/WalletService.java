@@ -31,6 +31,23 @@ public class WalletService {
                 .orElseGet(() -> walletRepository.save(new Wallet(kevoUserId, "USD")));
     }
 
+    /**
+     * Returns a page of this wallet's ledger entries, most recent first -
+     * the itemized activity history a bank app would show (M32 gap-closure
+     * item, 2026-10-25). No database-level pagination yet: the full
+     * per-wallet list is fetched and sliced in memory, which is fine for a
+     * prototype's realistic per-user entry counts; worth revisiting with a
+     * real Pageable query if that assumption ever stops holding.
+     */
+    public List<LedgerEntry> getLedgerEntries(Long walletId, int limit, int offset) {
+        List<LedgerEntry> all = ledgerEntryRepository.findByWalletIdOrderByCreatedAtDesc(walletId);
+        if (offset >= all.size()) {
+            return List.of();
+        }
+        int end = Math.min(offset + limit, all.size());
+        return all.subList(offset, end);
+    }
+
     public Map<Bucket, BigDecimal> computeBalances(Long walletId) {
         Map<Bucket, BigDecimal> balances = new EnumMap<>(Bucket.class);
         for (Bucket bucket : Bucket.values()) {
