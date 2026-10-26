@@ -223,10 +223,30 @@ class DepositReversalTest {
         depositService.createDeposit(wallet, new BigDecimal("10.00"), "EUR", "reinstate-wrong-state-failed-1");
         Deposit failedDeposit = depositService.findExisting(wallet.getId(), "reinstate-wrong-state-failed-1").orElseThrow();
         assertEquals(DepositStatus.FAILED, failedDeposit.getStatus());
+        // provider_reference is NOT NULL UNIQUE at the DB level - a real
+        // ./mvnw test run (2026-10-26) found this currency-mismatch path
+        // was passing null for it, which this assertion would have caught
+        // immediately rather than only failing deep inside Hibernate's
+        // flush with a confusing "null identifier" error. Now fixed in
+        // DepositService to synthesize a clearly-labeled placeholder.
+        assertNotNull(failedDeposit.getProviderReference());
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
                 depositReversalService.reinstateDeposit(wallet.getKevoUserId(), failedDeposit.getId(), "should not work"));
         assertTrue(ex.getMessage().contains("Only a REVERSED deposit can be reinstated"));
+    }
+
+    @Test
+    void depositExceedingDailyLimitSavesAsFailedWithRealProviderReference() {
+        // Same bug class as the currency-mismatch case above, same real
+        // fix - this path also never calls the payment provider, so it
+        // also needs a synthesized, non-null provider_reference rather
+        // than the null this code used to pass before 2026-10-26.
+        Wallet wallet = newFundedWallet(new BigDecimal("100.00"), "reinstate-daily-limit-1");
+        depositService.createDeposit(wallet, new BigDecimal("10001.00"), "USD", "reinstate-daily-limit-over-1");
+        Deposit overLimitDeposit = depositService.findExisting(wallet.getId(), "reinstate-daily-limit-over-1").orElseThrow();
+        assertEquals(DepositStatus.FAILED, overLimitDeposit.getStatus());
+        assertNotNull(overLimitDeposit.getProviderReference());
     }
 
     @Test

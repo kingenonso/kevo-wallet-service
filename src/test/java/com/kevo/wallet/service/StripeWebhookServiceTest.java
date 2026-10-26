@@ -276,8 +276,21 @@ class StripeWebhookServiceTest {
 
     @AfterEach
     void cleanup() {
-        if (testWalletIds.isEmpty()) return;
+        // Missing until a real ./mvnw test run (2026-10-26) found it the
+        // hard way: every event ID this file sends starts with "evt_" but
+        // is NOT run-unique (built from a static idCounter that resets to
+        // 0 on every fresh JVM/Maven invocation, unlike newWallet()'s own
+        // kevoUserId, which mixes in System.currentTimeMillis()). Without
+        // deleting these rows, a second real run finds the first run's
+        // leftover webhook_events rows still on file and returns DUPLICATE
+        // for every single test - exactly the failure that happened here.
+        // WebhookEventServiceTest already does this for its own "evt-"
+        // (hyphen) prefixed demo events; this mirrors that exact pattern
+        // for "evt_" (underscore) Stripe events - the two prefixes don't
+        // collide with each other.
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            entityManager.createNativeQuery("DELETE FROM webhook_events WHERE event_id LIKE 'evt\\_%' ESCAPE '\\'").executeUpdate();
+            if (testWalletIds.isEmpty()) return;
             entityManager.createNativeQuery("DELETE FROM withdrawals WHERE wallet_id IN (:ids)")
                     .setParameter("ids", testWalletIds).executeUpdate();
             entityManager.createNativeQuery("DELETE FROM deposits WHERE wallet_id IN (:ids)")

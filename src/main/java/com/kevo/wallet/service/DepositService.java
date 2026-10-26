@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class DepositService {
@@ -43,7 +44,17 @@ public class DepositService {
         }
 
         if (!wallet.getCurrency().equalsIgnoreCase(currency)) {
-            return saveOutcome(new Deposit(wallet.getId(), idempotencyKey, null,
+            // provider_reference is NOT NULL UNIQUE at the DB level (V2
+            // migration) - this branch never actually calls the payment
+            // provider, so there is no real reference to record. A
+            // synthesized, clearly-labeled placeholder satisfies the
+            // constraint honestly (distinguishable from a real provider
+            // reference on sight) rather than passing null, which this
+            // code did until a real `./mvnw test` run against a real
+            // database (2026-10-26, via a new test exercising this exact
+            // path for the first time in this project's history) found it
+            // fails the NOT NULL constraint for real.
+            return saveOutcome(new Deposit(wallet.getId(), idempotencyKey, "NO_PROVIDER_CALL:" + UUID.randomUUID(),
                     paymentProvider.getProviderName(), amount, currency, DepositStatus.FAILED, null),
                     wallet.getId(), idempotencyKey);
         }
@@ -55,7 +66,11 @@ public class DepositService {
                 wallet.getId(), DepositStatus.COMPLETED, Instant.now().minus(24, ChronoUnit.HOURS));
 
         if (alreadyDepositedToday.add(amount).compareTo(DAILY_DEPOSIT_LIMIT) > 0) {
-            return saveOutcome(new Deposit(wallet.getId(), idempotencyKey, null,
+            // Same reasoning as the currency-mismatch branch above - no
+            // provider was ever called, so a synthesized placeholder
+            // satisfies provider_reference's NOT NULL UNIQUE constraint
+            // honestly instead of passing null.
+            return saveOutcome(new Deposit(wallet.getId(), idempotencyKey, "NO_PROVIDER_CALL:" + UUID.randomUUID(),
                     paymentProvider.getProviderName(), amount, currency, DepositStatus.FAILED, null),
                     wallet.getId(), idempotencyKey);
         }
