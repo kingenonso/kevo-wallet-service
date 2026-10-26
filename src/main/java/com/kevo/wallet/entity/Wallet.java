@@ -84,4 +84,17 @@ public class Wallet {
     public void restrict() {
         this.status = WalletStatus.RESTRICTED;
     }
+
+    // The inverse of restrict() - called when a previously-restricting
+    // negative balance has been resolved (e.g. a disputed deposit's funds
+    // were reinstated after KEVO won the dispute, see
+    // DepositReversalService.reinstateDeposit()). Only lifts a RESTRICTED
+    // wallet - deliberately leaves SUSPENDED/CLOSED alone, since those are
+    // separate, administratively-controlled states this balance-driven
+    // logic has no business undoing.
+    public void liftRestriction() {
+        if (this.status == WalletStatus.RESTRICTED) {
+            this.status = WalletStatus.ACTIVE;
+        }
+    }
 }
